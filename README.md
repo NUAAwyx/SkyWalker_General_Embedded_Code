@@ -128,13 +128,11 @@ arm-none-eabi-gdb build/zephyr/zephyr.elf -ex "target remote :3333" \
 
 ## 常见问题
 - Q：如何添加新板支持？
-  A：在 boards/ 下新增目录，添加 board.yml、board.cmake、dts、defconfig 与 support 脚本；在 west/Zephyr 环境中验证 `west build -b <your_board>` 能成功构建并能被 flash。
+- A：在 boards/ 下新增目录，添加 board.yml、board.cmake、dts、defconfig 与 support 脚本；在 west/Zephyr 环境中验证 `west build -b <your_board>` 能成功构建并能被 flash。
 - Q：我能否在本仓库直接修改 Zephyr 源？
-  A：仓库通过 west manifest 引用了 Zephyr；一般建议通过 overlay 或模块化方式扩展，而不是直接改动上游 Zephyr 源。
+- A：仓库通过 west manifest 引用了 Zephyr；一般建议通过 overlay 或模块化方式扩展，而不是直接改动上游 Zephyr 源。
 
 ## 联系与贡献者
-如需合并贡献或讨论设计，请在仓库中打开 Issue 或提交 Pull Request，或直接联系仓库所有者（GitHub 用户：Alexei-the-rookie）。
+如需合并贡献或讨论设计，请在仓库中打开 Issue 或提交 Pull Request，或直接联系仓库所有者。
 
 ---
-
-如果你希望我把这个 README 直接提交到仓库（创建/更新 README.md），或者把 README 翻译成英文版/添加更多板级使用说明（例如更详细的 OpenOCD 使用步骤或参考的 toolchain 版本），我可以继续帮你生成对应的 PR 内容或补充文档.
