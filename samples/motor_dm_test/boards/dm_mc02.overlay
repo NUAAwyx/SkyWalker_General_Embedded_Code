@@ -1,0 +1,29 @@
+/*
+ * motor_dm_test 台架 overlay：1 台达妙电机（MIT 模式，纯力矩）。
+ *
+ * 台架的唯一目的：让 DT_INST_FOREACH_STATUS_OKAY(MOTOR_DM_INST) 展开成非零，
+ * 使 motor_dm.c 首次真正进入二进制。多台 DM 的正式配置留给 application/。
+ * 节点名与属性名一律以 skywalker,motor_dm.yaml 为准。
+ */
+
+/ {
+	dm_motor: dm_motor {
+		compatible = "skywalker,motor_dm";
+
+		/* ⚠️ MIT 模式下仲裁 ID 就是电机自己的 CAN ID，**没有偏移**。
+		 *    这里 id 和 tx-id 必须写成同一个值。
+		 *    抄 DJI 的 0x200 会让电机一个字节都收不到，而且不报错——
+		 *    总线上只看到帧一直发，电机毫无反应。 */
+		can-dev = <&can1>;
+		id      = <1>;      /* 电机 CAN_ID，须与调试助手里设的一致 */
+		tx-id   = <0x01>;   /* 必须 == id */
+		rx-id   = <0x00>;   /* 反馈帧 ID = Master ID，手册 4.1，默认 0。
+		                     * 所有 DM 共用这一个 ID，靠 D[0] 低 4 位认领。 */
+		type    = "DM_TYPE_MIT";
+
+		/* 电机里用调试助手设的 PMAX/VMAX/TMAX 必须与
+		 * motor_dm.c 的 MOTOR_DM_P_MAX / V_MAX / T_MAX 一致（手册 4.2）。
+		 * 对不上不报错，只是扭矩差一个固定系数。 */
+		status  = "okay";
+	};
+};

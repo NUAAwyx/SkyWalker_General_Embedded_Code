@@ -1,0 +1,135 @@
+/*
+ * application —— 【最终固件】的设备树。
+ *
+ * 这个文件是整辆车"是什么样"的唯一定义处：
+ *   装了几个电机、挂在哪个 CAN 口、几号 ID、底盘几何、云台行程、PID 增益。
+ * 上层代码（src/main.c）里【一个型号名都不出现】—— 它只认 motor_set / motor_get
+ * 和 chassis/gimbal 两个设备。所以换电机型号 = 改这里的 compatible / type，
+ * 一行 C 都不用动。
+ *
+ * ⚠️⚠️ 下面所有数值【都是占位的】⚠️⚠️
+ *   电机 ID、底盘几何、云台行程、PID 增益全部是编的，没有任何装车意义。
+ *   上真车前必须逐项替换成实车量出来的值。唯一例外是结构（哪个属性填什么
+ *   形状），那部分是对的，可以照抄。
+ *
+ * 板级 dts（boards/damiao/dm_mc02/dm_mc02.dts）里已经有的，这里【不用重复写】：
+ *   can1 / can2 / can3、uart5（DR16 用）、spi2 上的 bmi08x_accel/bmi08x_gyro。
+ *   本文件只加 skywalker 自己的节点和 pwm_heat 的定时器。
+ */
+
+/ {
+	/* ═══ IMU ═══
+	 * 五个 phandle 各管一件事：accel/gyro 是数据源，heat 是加热片，
+	 * filter 是卡尔曼，pid 是温控。缺一个 imu_init 会失败。 */
+	imu: imu {
+		compatible = "skywalker,imu";
+		accel-dev  = <&bmi08x_accel>;
+		gyro-dev   = <&bmi08x_gyro>;
+		heat-dev   = <&pwm_heat>;
+		filter-dev = <&ekf_filter>;
+		pid-dev    = <&temp_pid>;
+		estimator  = "ekf";
+	};
+
+	ekf_filter: ekf_filter {
+		compatible = "skywalker,kalman_filter";
+		state-dim   = <4>;
+		measure-dim = <3>;
+	};
+
+	/* ═══ PID ═══
+	 * ⚠️ 全部是占位增益，一个都没整定过。台架上一项一项调。
+	 * out-max 的量纲取决于下发帧怎么填，见 samples/motor_dji_test 里的挂账。 */
+	temp_pid:  temp_pid  { compatible = "skywalker,pid"; k-p="1"; k-i="0"; k-d="0"; i-max="0"; out-max="1"; deadband="0"; };
+	wheel_pid: wheel_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	steer_pid: steer_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	tspd_pid:  tspd_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	tang_pid:  tang_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	yaw_a_pid: yaw_a_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	yaw_s_pid: yaw_s_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	pt_a_pid:  pt_a_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	pt_s_pid:  pt_s_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	fric_pid:  fric_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+
+	/* ═══ 底盘轮速电机（can1，ID 1~4 共用一个发送帧 0x200）═══
+	 * ⚠️ 换成达妙电机只要改 `compatible` 和 `type`，属性名一样。
+	 *    motor_dji 和 motor_dm 共用同一个 binding 基类（can-dev/id/tx-id/rx-id）。 */
+	c0: c0 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <1>; tx-id = <0x200>; rx-id = <0x201>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	c1: c1 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <2>; tx-id = <0x200>; rx-id = <0x202>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	c2: c2 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <3>; tx-id = <0x200>; rx-id = <0x203>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	c3: c3 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <4>; tx-id = <0x200>; rx-id = <0x204>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+
+	/* ═══ 云台 + 发射（can2）═══
+	 * ⚠️ 云台 yaw/pitch 真车多半是 GM6020（tx-id 0x1ff 那一组），这里图省事
+	 *    全写成 M3508。换的时候记得 id 和 tx-id 一起改 —— DJI 的对应关系是
+	 *    id 1~4 ↔ 0x200、id 5~8 ↔ 0x1ff，填错电机不会转，而且不报错。 */
+	g_yaw:   g_yaw   { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <1>; tx-id = <0x200>; rx-id = <0x201>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	g_pitch: g_pitch { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <2>; tx-id = <0x200>; rx-id = <0x202>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	trigger: trigger { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <3>; tx-id = <0x200>; rx-id = <0x203>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+
+	/* 摩擦轮：计划是【两个】，所以两个节点。
+	 * GIMBAL_FRICTION_MAX 是上限 4，实际几个由这里的个数决定 ——
+	 * friction_num 是从属性长度算出来的，不用手写。 */
+	fric0: fric0 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <4>; tx-id = <0x200>; rx-id = <0x204>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	fric1: fric1 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <5>; tx-id = <0x1ff>; rx-id = <0x205>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+
+	/* ═══ 底盘 ═══
+	 * 下标约定【0 = 左前，逆时针】，四个数组必须按同一下标对齐，否则
+	 * CHASSIS_DT_ASSERTS 会在编译期拦下。
+	 *
+	 * ⚠️ wheel-x / wheel-y 是【轮子在车体系里的位置】，不是轮距轮轴：
+	 *      下标 0 左前 → x = +半轴距, y = +半轮距
+	 *      下标 1 右前 → x = +半轴距, y = -半轮距
+	 *      下标 2 右后 → x = -半轴距, y = -半轮距
+	 *      下标 3 左后 → x = -半轴距, y = +半轮距
+	 *    量错一点，小陀螺就会让车走圈而不是原地转。
+	 *    （#define 里的 CHASSIS_X_ALPHA_DEG 假定的是 X 型布局，见 chassis.c。） */
+	skywalker_chassis: chassis {
+		compatible = "skywalker,chassis";
+		type = "mecanum";
+		wheels       = <&c0 &c1 &c2 &c3>;
+		wheel-x      = "0.2", "0.2", "-0.2", "-0.2";
+		wheel-y      = "0.2", "-0.2", "-0.2", "0.2";
+		wheel-radius = "0.06";
+		wheel-pid    = <&wheel_pid>;
+		imu          = <&imu>;
+
+		trigger-motor       = <&trigger>;
+		trigger-speed-pid   = <&tspd_pid>;
+		trigger-angle-pid   = <&tang_pid>;
+		trigger-angle-deg   = "45";     /* 360 / 拨盘槽数 */
+		trigger-speed-deg-s = "360";
+	};
+
+	/* ═══ 云台 ═══ */
+	skywalker_gimbal: gimbal {
+		compatible = "skywalker,gimbal";
+		yaw-motor        = <&g_yaw>;
+		pitch-motor      = <&g_pitch>;
+		imu              = <&imu>;
+		yaw-pid          = <&yaw_a_pid>;
+		yaw-speed-pid    = <&yaw_s_pid>;
+		pitch-pid        = <&pt_a_pid>;
+		pitch-speed-pid  = <&pt_s_pid>;
+		/* ⚠️ 必须 min < max，否则 gimbal_init 返回 -EINVAL。
+		 *    这是机械行程，撞限位前必须夹住，量准。 */
+		pitch-min-deg    = "-20";
+		pitch-max-deg    = "30";
+
+		friction-motors      = <&fric0 &fric1>;
+		friction-pid         = <&fric_pid>;
+		friction-speed-deg-s = "6000";
+	};
+};
+
+/* IMU 加热片用的 PWM。prescaler=99 → 100 分频，接在 tim3 的 ch4 上。 */
+&timers3 {
+	status = "okay";
+	st,prescaler = <99>;
+
+	pwm_heat: pwm {
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <&tim3_ch4_pb1>;
+	};
+};

@@ -212,13 +212,17 @@
 };
 
 &uart5 {
-	// SBUS
+	// 遥控器
 	status = "okay";
 	pinctrl-0 = <&uart5_rx_pd2 &uart5_tx_pc12>;
 	pinctrl-names = "default";
 	current-speed = <100000>;
 	data-bits = <8>;
 	stop-bits = "2";
+	parity = "even";
+	dmas = <&dmamux1 6 66 STM32_DMA_PERIPH_TX>,
+               <&dmamux1 5 65 STM32_DMA_PERIPH_RX>;
+        dma-names = "tx", "rx";
 };
 
 &usart10 {

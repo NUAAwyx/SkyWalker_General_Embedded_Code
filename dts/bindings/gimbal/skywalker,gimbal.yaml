@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: Skywalker Gimbal
+
+compatible: "skywalker,gimbal"
+
+include: [base.yaml]
+
+properties:
+  yaw-motor:
+    type: phandle
+    required: false
+    description: yaw 轴电机节点
+  pitch-motor:
+    type: phandle
+    required: false
+    description: pitch 轴电机节点
+  imu:
+    type: phandle
+    required: false
+    description: |
+      姿态设备节点（通常指向 skywalker,imu)。
+  yaw-pid:
+    type: phandle
+    required: false
+    description: yaw 轴角度环 PID 增益设备节点（自瞄模式用）
+  yaw-speed-pid:
+    type: phandle
+    required: false
+    description: |
+      yaw 轴【速度环】PID 增益设备节点。它是 yaw 的【内环】，永远在跑，
+      区别只在设定值从哪来：
+        手动——摇杆/鼠标直接给角速度设定值，角度环【旁路】；
+        自瞄——角度环（yaw-pid）的输出当速度环的设定值，两级串联。
+      两种情况下闭合的都是速度环；角度环只是加在它前面的一层。
+      和角度环增益差一个数量级，不能共用一组参数。
+      模式本身【不进 DT】——比赛时切是运行时行为，放 gimbal.h 的 C 枚举里。
+  pitch-pid:
+    type: phandle
+    required: false
+    description: |
+      pitch 轴【角度环】PID 增益设备节点。
+      pitch 两种模式都走角度环——pitch 有机械行程，必须有个"目标角"才谈得上限幅，
+      而手动模式下的目标角由上层把鼠标位移积出来（见 gimbal_set_pitch_angle）。
+  pitch-min-deg:
+    type: string
+    required: false
+    description: |
+      pitch 轴机械行程下限（度）。必填——pitch 一定撞得到限位。
+      位置环不会自己停：目标超程时误差不消，PID 会持续输出堵转电流顶住
+      限位，这是个不会自解的正反馈。限幅必须存在于代码里的某处，本项是
+      与电机型号解耦的那一处。
+  pitch-max-deg:
+    type: string
+    required: false
+    description: pitch 轴机械行程上限（度）。必填理由同 pitch-min-deg
+
+  pitch-speed-pid:
+    type: phandle
+    required: false
+    description: |
+      pitch 轴【速度环】PID 增益设备节点，串在 pitch-pid 后面。
+      两轴的速度环反馈都是【云台 IMU 的角速度】（imu_get_gyro_axis），
+      不是电机自己的编码器 —— 用编码器的话底盘自转会被当成"云台转到位了"，
+      云台就跟着底盘一起转，解耦无从谈起。
+
+  friction-motors:
+    type: phandles
+    required: false
+    description: |
+      摩擦轮电机节点
+  friction-pid:
+    type: phandle
+    required: false
+    description: 摩擦轮转速环 PID 增益设备节点（各摩擦轮共用一组增益）。仅存在 friction-motors 时才需要
+  friction-speed-deg-s:
+    type: string
+    required: false
+    description: |
+      摩擦轮目标角速度（度/秒，【输出轴】）。
+      必填（存在 friction-motors 时）——摩擦轮是"要么不开、开就定速"的执行器，
+      没有这个值它就没有设定值可用。
+      这里给的是转速不是"弹速"：同样的转速换弹种、换摩擦轮粗糙度，出膛速度都不一样。
+      要的是"我这组摩擦轮转到多少转"，那是装车事实，所以进 DT 不进运行时接口。

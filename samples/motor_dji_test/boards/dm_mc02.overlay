@@ -1,0 +1,35 @@
+/*
+ * motor_dji_test 台架 overlay：1 台 M3508 + 一个速度环 PID。
+ *
+ * 台架的唯一目的：让 DT_INST_FOREACH_STATUS_OKAY(MOTOR_DJI_INST) 展开成非零，
+ * 使 motor_dji.c 首次真正进入二进制。4 台电机的正式配置留给 application/。
+ * 节点名与属性名一律以 skywalker,motor_dji.yaml / skywalker,pid.yaml 为准。
+ */
+
+/ {
+	speed_pid: speed_pid {
+		compatible = "skywalker,pid";
+		/* TODO(hw): 增益沿用 mambo 的 M3508 速度环起点，未在本车整定。
+		 * out-max 的量纲也待确认（mambo 输出是归一化量，本驱动的输出口径
+		 * 取决于发送线程怎么填帧）——上电后按阶跃响应重调。 */
+		k-p      = "8";
+		k-i      = "0";
+		k-d      = "0";
+		i-max    = "2";
+		out-max  = "2";
+		deadband = "0";
+	};
+
+	m3508_motor: m3508_motor {
+		compatible = "skywalker,motor_dji";
+
+		/* 1 台就用 ID1：DJI 的对应关系是 0x201 ↔ ID1，tx 帧 0x200 载 ID1~4 */
+		can-dev    = <&can1>;
+		id         = <1>;
+		tx-id      = <0x200>;
+		rx-id      = <0x201>;
+		type       = "M3508";
+		gear-ratio = "19.2032";
+		status     = "okay";
+	};
+};

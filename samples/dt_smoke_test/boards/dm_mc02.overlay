@@ -1,0 +1,112 @@
+/*
+ * dt_smoke_test —— 【编译期】冒烟测试，不烧板子、不接电机。
+ *
+ * 它唯一的目的：让 chassis.c / gimbal.c 里那两坨 DT 宏真正展开一次。
+ *
+ * 为什么非要有这么个东西：
+ *   *_DT_CONFIG_INST_INIT 只在 DT_INST_FOREACH_STATUS_OKAY 至少命中一个节点时
+ *   才展开。而任何【没有 skywalker,chassis / skywalker,gimbal 节点】的构建
+ *   （包括 imu_test、motor_dji_test）里，那些宏一个字符都不会被编译。
+ *   于是语法错误、拼错的属性名、缺尾逗号、少个右括号……全部静默潜伏，
+ *   一直等到 application 第一次写出真节点的那一刻集中爆炸。
+ *   实测：这个文件第一次跑起来，一次性炸出 3 个真 bug（见 NOTES.md）。
+ *
+ * 所以它是【回归防线】不是台架：以后动 chassis.c / gimbal.c 的 DT 宏，
+ * 先 `west build -b dm_mc02 samples/dt_smoke_test -d /tmp/x` 验一遍。
+ *
+ * ⚠️ 下面所有数值【都是编的】，只求语法和形状对，没有任何装车意义：
+ *    整车几何 / 电机 ID / PID 增益 / pitch 行程 / 摩擦轮转速，全和真车无关。
+ *    真配置在 application/。这里抄真车数据反而危险 —— 会有人以为它算数。
+ *
+ * ⚠️ 这里特意用 type = "steer"：它是三个构型里唯一会走 CHASSIS_OPT_DEVS
+ *    （选填 phandles 数组）的，也就是曾经挂掉的那条路。换成 mecanum 就少测一半。
+ */
+
+/ {
+	imu: imu {
+		compatible = "skywalker,imu";
+		accel-dev  = <&bmi08x_accel>;
+		gyro-dev   = <&bmi08x_gyro>;
+		heat-dev   = <&pwm_heat>;
+		filter-dev = <&ekf_filter>;
+		pid-dev    = <&temp_pid>;
+		estimator  = "ekf";
+	};
+
+	ekf_filter: ekf_filter {
+		compatible = "skywalker,kalman_filter";
+		state-dim   = <4>;
+		measure-dim = <3>;
+	};
+
+	temp_pid:  temp_pid  { compatible = "skywalker,pid"; k-p="1"; k-i="0"; k-d="0"; i-max="0"; out-max="1"; deadband="0"; };
+	ekf_pid:   ekf_pid   { compatible = "skywalker,pid"; k-p="1"; k-i="0"; k-d="0"; i-max="0"; out-max="1"; deadband="0"; };
+	wheel_pid: wheel_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	steer_pid: steer_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	tspd_pid:  tspd_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	tang_pid:  tang_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	yaw_a_pid: yaw_a_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	yaw_s_pid: yaw_s_pid { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	pt_a_pid:  pt_a_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	pt_s_pid:  pt_s_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+	fric_pid:  fric_pid  { compatible = "skywalker,pid"; k-p="8"; k-i="0"; k-d="0"; i-max="2"; out-max="2"; deadband="0"; };
+
+	m0: m0 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <1>; tx-id = <0x200>; rx-id = <0x201>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m1: m1 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <2>; tx-id = <0x200>; rx-id = <0x202>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m2: m2 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <3>; tx-id = <0x200>; rx-id = <0x203>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m3: m3 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <4>; tx-id = <0x200>; rx-id = <0x204>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m4: m4 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <5>; tx-id = <0x1ff>; rx-id = <0x205>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m5: m5 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <6>; tx-id = <0x1ff>; rx-id = <0x206>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m6: m6 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <7>; tx-id = <0x1ff>; rx-id = <0x207>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	m7: m7 { compatible = "skywalker,motor_dji"; can-dev = <&can1>; id = <8>; tx-id = <0x1ff>; rx-id = <0x208>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+
+	s0: s0 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <1>; tx-id = <0x200>; rx-id = <0x201>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	s1: s1 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <2>; tx-id = <0x200>; rx-id = <0x202>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	s2: s2 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <3>; tx-id = <0x200>; rx-id = <0x203>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+	s3: s3 { compatible = "skywalker,motor_dji"; can-dev = <&can2>; id = <4>; tx-id = <0x200>; rx-id = <0x204>; type = "M3508"; gear-ratio = "19.2032"; status = "okay"; };
+
+	skywalker_chassis: chassis {
+		compatible = "skywalker,chassis";
+		type = "steer";
+		wheels       = <&m0 &m1 &m2 &m3>;
+		wheel-x      = "0.2", "-0.2", "-0.2", "0.2";
+		wheel-y      = "0.2", "0.2", "-0.2", "-0.2";
+		wheel-radius = "0.06";
+		wheel-pid    = <&wheel_pid>;
+		steer-motors = <&s0 &s1 &s2 &s3>;
+		steer-pid    = <&steer_pid>;
+		imu          = <&imu>;
+		trigger-motor      = <&m4>;
+		trigger-speed-pid  = <&tspd_pid>;
+		trigger-angle-pid  = <&tang_pid>;
+		trigger-angle-deg  = "45";
+		trigger-speed-deg-s = "360";
+	};
+
+	skywalker_gimbal: gimbal {
+		compatible = "skywalker,gimbal";
+		yaw-motor        = <&m5>;
+		pitch-motor      = <&m6>;
+		imu              = <&imu>;
+		yaw-pid          = <&yaw_a_pid>;
+		yaw-speed-pid    = <&yaw_s_pid>;
+		pitch-pid        = <&pt_a_pid>;
+		pitch-speed-pid  = <&pt_s_pid>;
+		pitch-min-deg    = "-20";
+		pitch-max-deg    = "30";
+		friction-motors      = <&m7>;
+		friction-pid         = <&fric_pid>;
+		friction-speed-deg-s = "6000";
+	};
+};
+
+&timers3 {
+	status = "okay";
+	st,prescaler = <99>;
+
+	pwm_heat: pwm {
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <&tim3_ch4_pb1>;
+	};
+};

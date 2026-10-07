@@ -1,0 +1,31 @@
+description: Skywalker DM Motor
+
+compatible: "skywalker,motor_dm"
+
+include: [base.yaml]
+
+properties:
+  can-dev:
+    type: phandle
+    required: true
+    description: CAN 控制器设备节点
+  id:
+    type: int
+    required: true
+    description: 电机 ID
+  tx-id:
+    type: int
+    required: true
+    description: CAN 发送报文 ID
+  rx-id:
+    type: int
+    required: true
+    description: CAN 接收报文 ID
+  type:
+    type: string
+    required: true
+    enum:
+      - "DM_TYPE_MIT"
+      - "DM_TYPE_POSITION_AND_SPEED"
+      - "DM_TYPE_SPEED_ONLY"
+    description: 控制协议

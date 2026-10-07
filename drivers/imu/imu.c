@@ -1,10 +1,12 @@
 #include "drivers/imu/imu.h"
 
 #include <string.h>
+#include <stdbool.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/sys/printk.h>
 #include "drivers/kalman_filter/kalman_filter.h"
 #include "drivers/pid/pid.h"
 
@@ -65,6 +67,8 @@ static int skywalker_imu_init(const struct device *dev) {
         data->gyro[i]  = 0.0f;
         data->angle[i] = 0.0f;
     }
+
+    k_mutex_init(&data->mutex);
     return 0;
 }
 
@@ -87,49 +91,69 @@ DT_INST_FOREACH_STATUS_OKAY(IMU_INST)
 
 // ─── 传感器数据获取 ───
 /**
- * @brief 从加速度计和陀螺仪获取原始数据
+ * @brief 从加速度计获取原始数据（含片上温度）
  *
- * 触发采样后读取 accel / gyro / temp 并填入 data 结构体。
+ * 温度跟着加速度计走，不单独开一个函数：SENSOR_CHAN_DIE_TEMP 读的是 accel
+ * 芯片的片上温度，而且是【读已缓存好的寄存器、不产生 I/O】，不额外花 SPI 时间。
  *
  * @param dev IMU 设备指针
  */
-void imu_fetch(const struct device *dev) {
+void imu_fetch_accel(const struct device *dev) {
     const imu_config *cfg = dev->config;
     imu_data *data = dev->data;
 
     struct sensor_value val[3];
+    struct sensor_value temp;
 
-    // ─── 加速度 ───
     sensor_sample_fetch(cfg->accel_dev);
     sensor_channel_get(cfg->accel_dev, SENSOR_CHAN_ACCEL_XYZ, val);
     data->accel[0] = sensor_value_to_float(&val[0]);
     data->accel[1] = sensor_value_to_float(&val[1]);
     data->accel[2] = sensor_value_to_float(&val[2]);
 
-    // ─── 角速度 ───
+    sensor_channel_get(cfg->accel_dev, SENSOR_CHAN_DIE_TEMP, &temp);
+    data->temp = sensor_value_to_float(&temp);
+}
+
+/**
+ * @brief 从陀螺仪获取原始数据
+ *
+ * @param dev IMU 设备指针
+ */
+void imu_fetch_gyro(const struct device *dev) {
+    const imu_config *cfg = dev->config;
+    imu_data *data = dev->data;
+
+    struct sensor_value val[3];
+
     sensor_sample_fetch(cfg->gyro_dev);
     sensor_channel_get(cfg->gyro_dev, SENSOR_CHAN_GYRO_XYZ, val);
     data->gyro[0] = sensor_value_to_float(&val[0]);
     data->gyro[1] = sensor_value_to_float(&val[1]);
     data->gyro[2] = sensor_value_to_float(&val[2]);
-
-    // ─── 温度 ───
-    struct sensor_value temp;
-    sensor_channel_get(cfg->accel_dev, SENSOR_CHAN_DIE_TEMP, &temp);
-    data->temp = sensor_value_to_float(&temp);
 }
 
 // ─── 姿态解算调度 ───
+//
+// 拆成两个入口，是为了让【每一步的节拍由喂它的那个传感器决定】：
+//
+//   imu_predict 吃陀螺仪   → 陀螺仪数据就绪时调（1000 Hz）
+//   imu_correct 吃加速度计 → 加速度计数据就绪时调（800 Hz）
+//
+// 为什么 dt 只属于 predict：
+//   predict 里 F = I + 0.5·Ω·dt 是纯积分因子，dt 偏 → 旋转尺度偏，
+//   而加速度计观测不了旋转尺度（它只给重力方向），yaw 又无绝对参考，
+//   误差会无界累积；
+//   correct 里没有 dt —— 卡尔曼增益 K = P·Hᵀ·(H·P·Hᵀ+R)⁻¹ 是
+//   "按当前不确定度把状态往观测拉一把"，跟两次观测隔了多久无关。
+
 /**
- * @brief 姿态解算入口
- *
- * 根据 cfg->estimator 通过 imu_get_api 查找并调用对应算法。
- * 新增加法只需添加 imu_estimator_xxx + imu_get_api 中一行。
+ * @brief 预测步：调用当前滤波器的 predict
  *
  * @param dev IMU 设备指针
- * @param dt  采样周期（秒）
+ * @param dt  距上次 imu_predict 的实测间隔（秒）
  */
-void imu_estimate(const struct device *dev, float dt) {
+void imu_predict(const struct device *dev, float dt) {
     const imu_config *cfg = dev->config;
     imu_data *data = dev->data;
     const struct imu_filter_api *api = imu_get_api(cfg->estimator);
@@ -137,8 +161,136 @@ void imu_estimate(const struct device *dev, float dt) {
     if (api == NULL) return;
 
     api->predict(cfg->filter_dev, data->gyro, dt, data->angle);
+}
+
+/**
+ * @brief 校正步：调用当前滤波器的 correct
+ *
+ * @param dev IMU 设备指针
+ */
+void imu_correct(const struct device *dev) {
+    const imu_config *cfg = dev->config;
+    imu_data *data = dev->data;
+    const struct imu_filter_api *api = imu_get_api(cfg->estimator);
+
+    if (api == NULL) return;
+
     api->correct(cfg->filter_dev, data->accel);
-    api->get_angle(cfg->filter_dev, data->angle);
+}
+
+/**
+ * @brief 算出姿态角并写入 data->angle（唯一写方）
+ *
+ * ★ 为什么角度要单独一个入口，而不是塞进 predict / correct 的末尾：
+ *
+ *   imu_ekf_get_angle 是【有状态】的 —— 它内部要写 ekf.YawPrev 和
+ *   ekf.YawRoundCount（见本文件末尾的 Yaw 跨圈累积）。也就是说
+ *   【调用次数本身就是语义的一部分】。
+ *
+ *   原来 predict 和 correct 捆在一起，一轮调一次。
+ *   如果拆开后让两边各在末尾调一次，就变成一轮调两次。
+ *   眼下不会出错，因为 ekf.YawTotal 全项目只写不读（死代码），
+ *   输出取的是原始 yaw；但只要哪天把它接上（angle[2] = ekf.YawTotal，
+ *   那本来就是这段代码的本意），yaw 在 ±π 附近跳变时跨圈计数就会被多算。
+ *
+ *   所以干净的做法是：predict / correct 都不碰 angle，
+ *   由调用方在每个周期末尾调一次本函数。
+ *
+ * ★ 为什么 tmp_angle 必须在【锁外】算：
+ *
+ *   临界区宽度 = 别人最坏的阻塞时间。本函数属于 1 kHz 的控制回路，
+ *   它的 WCET 是一分钱都不能多花的。对比一下两段宽度：
+ *
+ *     锁外：三次 atan2 + 一次 sqrt      几百个周期
+ *     锁内：三行 float 赋值            <  10 个周期
+ *
+ *   把解算关进锁里，等于每次发布都让等锁的人白等两个数量级，而这个等待
+ *   会直接加进估计线程的 WCET。tmp_angle 是【栈上局部变量】，别的线程
+ *   看不见它 —— 所以算它根本不需要保护，只有【发布】到 data->angle
+ *   的那三行需要。
+ *
+ * @param dev IMU 设备指针
+ */
+void imu_update_angle(const struct device *dev) {
+    const imu_config *cfg = dev->config;
+    imu_data *data = dev->data;
+    const struct imu_filter_api *api = imu_get_api(cfg->estimator);
+
+    if (api == NULL) return;
+
+    float tmp_angle[3];
+    api->get_angle(cfg->filter_dev, tmp_angle);
+
+    // 互斥锁保护：写方是本函数，读方是 imu_get_angle
+    k_mutex_lock(&data->mutex, K_FOREVER);
+    data->angle[0] = tmp_angle[0];
+    data->angle[1] = tmp_angle[1];
+    data->angle[2] = tmp_angle[2];
+    k_mutex_unlock(&data->mutex);
+}
+
+/**
+ * @brief 取一份姿态角快照到调用者的 buffer（唯一读方）
+ *
+ * ★ 为什么是「拷贝出去」而不是「交出指针」：
+ *
+ *   原来的接口是让调用者自己拿 data->angle 的地址去读，而那个地址是从
+ *   imu_dev->data 掏出来的驱动【私有内存】。一旦这个指针流到应用层，
+ *   系统里任何一行代码都可以绕过锁直接读写它 —— 锁就退化成心理安慰，
+ *   而且编译器一声不响。
+ *
+ *   改成拷贝之后，调用者拿到的是自己栈上的 buffer，天然不共享，
+ *   也就【不可能绕过】这把锁。想读角度只有这一个入口。
+ *
+ *   附带好处：拷贝发生在调用者的栈上，锁只需要盖住这里的发布/取走两下，
+ *   不需要在调用者那边再开一个临界区。
+ *
+ * ⚠️ k_mutex_lock 传 K_FOREVER 是安全的：本函数只持锁做三次读，
+ *    不会申请任何别的资源，因此不构成死锁环的一边。
+ *
+ * @param dev       IMU 设备指针
+ * @param out_angle 输出姿态角 (rad), [roll, pitch, yaw]
+ */
+void imu_get_angle(const struct device *dev, float out_angle[3]) {
+    imu_data *data = dev->data;
+
+    // 唯一读方。锁保证三个 float 是同一时刻的，不会拼出新 roll 配旧 pitch
+    k_mutex_lock(&data->mutex, K_FOREVER);
+    out_angle[0] = data->angle[0];
+    out_angle[1] = data->angle[1];
+    out_angle[2] = data->angle[2];
+    k_mutex_unlock(&data->mutex);
+}
+
+/**
+ * @brief 读单个轴的角速度（rad/s，原始量）
+ *
+ * 【不加锁】——这是本函数唯一值得说的地方。
+ *
+ * 读方（云台 yaw / pitch 两个速度内环）每次只取一个 float。单次对齐的 32 位
+ * 访问在 Cortex-M 上就是一条 load，中间插不进另一个执行流，所以它天然是原子的，
+ * 不需要任何同步。
+ *
+ * ⚠️ 不要为了"保险"把它塞进 data->mutex：那是白送的代价。锁一进，估计线程里的
+ *    imu_update_angle 就多出一个可能被阻塞的点，而这个点保护的是一份根本不会
+ *    被破坏的数据。临界区宽度 = 别人最坏阻塞时间，这笔账要记。详见 imu.h。
+ *
+ * ⚠️ 拿到的是【当前值】不是【快照】：连读两个轴得到的是两个不同时刻的值
+ *    （IMU 线程可能正好在两次调用之间跑了一轮）。
+ *    对 yaw / pitch 这两个互相独立的速度环，这正是想要的——各自用各自最新鲜的。
+ *    但如果哪天需要"三轴同一拍"（比如用三轴角速度积分姿态），这条接口不适用。
+ *
+ * @param dev  IMU 设备指针
+ * @param axis 轴，用 imu_axis_t（IMU_AXIS_ROLL / PITCH / YAW）
+ * @return 该轴角速度 (rad/s)；越界返回 0.0f
+ */
+float imu_get_gyro_axis(const struct device *dev, imu_axis_t axis) {
+    const imu_data *data = dev->data;
+
+    if (axis >= ARRAY_SIZE(data->gyro)) {
+        return 0.0f;
+    }
+    return data->gyro[axis];
 }
 
 // ─── 温度控制 ───
@@ -169,7 +321,24 @@ void imu_heat_control(const struct device *dev, float target_temp, float dt) {
     // PWM 输出：周期 20 ms（50 Hz，对标 mambo），output 单位 ns
     // 通道 4 对应 overlay 里 &timers3 的 pinctrl tim3_ch4_pb1（STM32 PWM 通道从 1 起）
     uint32_t period = PWM_MSEC(20);
-    pwm_set(cfg->heat_dev, 4, period, (uint32_t)output, PWM_POLARITY_NORMAL);
+    int ret = pwm_set(cfg->heat_dev, 4, period, (uint32_t)output, PWM_POLARITY_NORMAL);
+
+    // pwm_set 的失败是【静默】的：period_cycles 越过 16 位 ARR 上限、设备没就绪、
+    // 通道号非法 —— 全都只返回负值。现象是"温度上不去"，不报任何错。
+    // 和 sensor_trigger_set 的 -ENOSYS 同一类坑：返回值是唯一的报警器。
+    //
+    // 用 static 闩锁【只在状态变化时】报一次：本函数 ~10 Hz 调用，
+    // 无脑每次 printk 会以 10 行/秒 的速率刷屏，而"状态没变"信息量为零。
+    // 保留恢复分支是为了能区分【瞬时抖动】和【持续性故障】。
+    static bool heat_err_latched = false;
+
+    if (ret < 0 && !heat_err_latched) {
+        printk("imu_heat_control: pwm_set failed: %d\n", ret);
+        heat_err_latched = true;
+    } else if (ret == 0 && heat_err_latched) {
+        printk("imu_heat_control: pwm_set recovered\n");
+        heat_err_latched = false;
+    }
 }
 
 

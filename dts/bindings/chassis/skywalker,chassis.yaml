@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: Skywalker Chassis
+
+compatible: "skywalker,chassis"
+
+include: [base.yaml]
+
+properties:
+  wheels:
+    type: phandles
+    required: false
+    description: |
+      各轮的驱动电机节点，顺序即轮位（约定第一项为左前，逆时针）。
+      ⚠️ 顺序即契约：wheel-x / wheel-y 按同一下标对齐，
+      数组长度必须与 wheels 一致。任一项长度对不上，chassis.c 的展开宏会
+      取到越界下标，且编译期不报错。
+  wheel-x:
+    type: string-array
+    required: false
+    description: 各轮安装位置在车体系中的 x 坐标（米，车头方向为正），下标与 wheels 对齐
+  wheel-y:
+    type: string-array
+    required: false
+    description: 各轮安装位置在车体系中的 y 坐标（米，车左侧为正），下标与 wheels 对齐
+  wheel-radius:
+    type: string
+    required: false
+    description: 轮子半径（米），用于轮线速度与输出轴角速度之间的换算
+  type:
+    type: string
+    required: false
+    enum:
+      - "omni"
+      - "mecanum"
+      - "steer"
+    description: 依次为全向，麦轮，舵轮
+  steer-motors:
+    type: phandles
+    required: false
+    description: 各轮的转向电机节点，下标与 wheels 对齐。仅 type = "steer" 需要
+  wheel-pid:
+    type: phandle
+    required: false
+    description: 轮速环 PID 增益设备节点（各轮共用一组增益）
+  steer-pid:
+    type: phandle
+    required: false
+    description: 舵轮转向位置环 PID 增益设备节点。仅 type = "steer" 需要
+  imu:
+    type: phandle
+    required: false
+    description: |
+      姿态反馈设备节点（通常指向 skywalker,imu)小陀螺模式用。
+  trigger-motor:
+    type: phandle
+    required: false
+    description: |
+      拨弹盘电机节点。分单发和连发两种模式
+  trigger-speed-pid:
+    type: phandle
+    required: false
+    description: 拨弹盘【连发】速度环 PID 增益设备节点。仅存在 trigger-motor 时需要
+  trigger-angle-pid:
+    type: phandle
+    required: false
+    description: 拨弹盘【单发】位置环 PID 增益设备节点。仅存在 trigger-motor 时需要
+  trigger-angle-deg:
+    type: string
+    required: false
+    description: |
+      拨弹盘【单发】时每发出弹的步进角度（度，输出轴）。等于 360 / 拨盘槽数，
+      是机械几何量，必须按实际弹仓数出来。
+      连发不用本项——连发是恒速连续转，不数角度。
+  trigger-speed-deg-s:
+    type: string
+    required: false
+    description: |
+      拨弹盘【连发】时输出轴的目标角速度（度/秒）。
+      ⚠️ 不配（或配 0）= 不支持连发，与 trigger-speed-pid 缺失同义，
+         chassis_set_trigger_mode(TRIGGER_MODE_AUTO) 会返回 -ENOSYS。
+      这里给的是【转速】不是"发/秒"：实际出弹率还取决于槽位几何和弹的摩擦，
+      转速才是驱动真正在控的那个量。要按发/秒凑，自己乘 trigger-angle-deg。
+

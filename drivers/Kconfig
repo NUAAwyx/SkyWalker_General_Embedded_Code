@@ -15,6 +15,35 @@ config SKYWALKER_DRIVER_IMU
       select CMSIS_DSP_FASTMATH
       help
           Enable the IMU attitude estimation driver.
-          Select estimation method via DT property "estimator".   
+          Select estimation method via DT property "estimator". 
+
+config SKYWALKER_DRIVER_MOTOR
+    bool "Skywalker Motor Driver Framework"
+    depends on CAN
+    help
+        Common motor driver abstraction layer (base API). Concrete motor
+        drivers (DJI, DM, ...) depend on this.
+
+config SKYWALKER_DRIVER_MOTOR_DJI
+    bool "Skywalker DJI Motor Driver"
+    depends on SKYWALKER_DRIVER_MOTOR
+    help
+        Enable the DJI CAN motor driver (M3508 / M2006 / GM6020).
+
+config SKYWALKER_DRIVER_MOTOR_DM
+    bool "Skywalker DM Motor Driver"
+    depends on SKYWALKER_DRIVER_MOTOR
+    help
+        Enable the DM CAN motor driver.
+
+config SKYWALKER_DRIVER_CHASSIS
+    bool "Skywalker Chassis Driver"
+    help
+        Enable the chassis driver
+
+config SKYWALKER_DRIVER_GIMBAL
+    bool "Skywalker Gimbal Driver"
+    help
+        Enable the gimbal driver
 
 endmenu

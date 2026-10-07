@@ -1,0 +1,40 @@
+description: Skywalker DJI Motor
+
+compatible: "skywalker,motor_dji"
+
+include: [base.yaml]
+
+properties:
+  can-dev:
+    type: phandle
+    required: true
+    description: CAN 控制器设备节点
+  id:
+    type: int
+    required: true
+    description: 电机 ID
+  tx-id:
+    type: int
+    required: true
+    description: CAN 发送报文 ID
+  rx-id:
+    type: int
+    required: true
+    description: CAN 接收报文 ID
+  type:
+    type: string
+    required: true
+    enum:
+      - "M2006"
+      - "M3508"
+      - "GM6020"
+    description: 电机型号
+  gear-ratio:
+    type: string
+    required: true
+    description: 电机减速比
+  angle-offset-deg:
+    type: string
+    required: false
+    default: "0"
+    description: 编码器角度偏移量，单位：度

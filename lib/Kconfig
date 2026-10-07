@@ -24,4 +24,10 @@ config SKYWALKER_LIB_VOFA
     help
         Enable the VOFA library for debug
 
+config SKYWALKER_LIB_DR16
+    bool "dr16"
+    depends on SERIAL
+    help
+        Enable the DR16 library
+
 endmenu
